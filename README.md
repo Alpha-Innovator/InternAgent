@@ -1,14 +1,14 @@
 # InternAgent: When Agent Becomes the Scientist – Building Closed-Loop System from Hypothesis to Verification
 
-[[ Paper 📓 ]](https://arxiv.org/abs/2505.16938) [[ Apply Page 💡 ]]() [[ Website 🏠 ]](https://alpha-innovator.github.io/InternAgent-project-page) [[ InternAgent Examples 🤗 ]](https://huggingface.co/U4R/InternAgent)
+[[ Paper 📓 ]](https://arxiv.org/abs/2505.16938) [[ Apply Page 💡 ]](https://discovery.intern-ai.org.cn) [[ Website 🏠 ]](https://alpha-innovator.github.io/InternAgent-project-page)
 
 <i>
 From One Idea to Autonomous Experimentation
 </i>
 </div>
 
-# 🔥 News
-  - <p style='text-align:justify'><i>2025.07.17</i>: &nbsp; 🔥 The source code of InternAgent has been partially open-sourced.
+## 🔥 News
+  - <p style='text-align:justify'><i>2025.07.17</i>: &nbsp; 🔥 The source code of InternAgent has been partially open-sourced. The complete version of InternAgent (covering 12 types of tasks for autonomous scientific research) will be open-sourced soon. This code repository can be used for full-cycle autonomous scientific research, ranging from hypothesis generation to automated experimental execution. It includes the source code for our initial version, covering paper retrieval, idea generation, coding, and experimental execution.
   - <p style='text-align:justify'><i>2025.07.10</i>: &nbsp; NovelSeek has be renamed to <b>InternAgent</b>. This change embodies our hopeful vision for autonomous scientific research framework, and we hope it will empower all researchers to achieve great scientific discoveries.</p>
 
 
@@ -55,22 +55,17 @@ It is a unified, closed-loop multi-agent system designed to automate and acceler
 - Suzuki Yield Prediction
 - Molecular Dynamics Simulation
 - Enhancer Activity Prediction
-- Transcription Prediction for Perturbation Respons
+- Transcription Prediction for Perturbation Response
 - Power Flow Estimation
 - Time Series Forecasting
 - Semantic Segmentation
 - Image Classification
 - Sentiment Analysis
 - Point Cloud Classification
-- Point Cloud Object Detection
+- Autonomous Driving
 - VLM & LLM Fine-tuning
 - ......
 
-
-
-## 🚀 Performance
-
-By leveraging multi-source knowledge injection, our system intelligently generates and verifies research ideas across multiple domains. Our system has significantly improved research efficiency in Suzuki Yield Prediction, Enhancer Activity Prediction, Transcription Prediction for Perturbation Respons, and so on.
 
 ## 🚀 How to use the early version, Dolphin?
 
@@ -99,8 +94,8 @@ bash launch_dolphin.sh
 ## Citation
 ```
 @article{team2025novelseek,
-  title={InternAgent: When Agent Becomes the Scientist--Building Closed-Loop System from Hypothesis to Verification},
-  author={Team, InternAgent and Zhang, Bo and Feng, Shiyang and Yan, Xiangchao and Yuan, Jiakang and Yu, Zhiyin and He, Xiaohan and Huang, Songtao and Hou, Shaowei and Nie, Zheng and others},
+  title={NovelSeek: When Agent Becomes the Scientist--Building Closed-Loop System from Hypothesis to Verification},
+  author={Team, NovelSeek and Zhang, Bo and Feng, Shiyang and Yan, Xiangchao and Yuan, Jiakang and Yu, Zhiyin and He, Xiaohan and Huang, Songtao and Hou, Shaowei and Nie, Zheng and others},
   journal={arXiv preprint arXiv:2505.16938},
   year={2025}
 }
