@@ -81,7 +81,7 @@ class Crw:
             # dict) and handles polling internally, returning list[dict].
             crawl_response = self.app.crawl(
                 url=url,
-                **({} if params is None else params),
+                **(params or {}),
                 **kwargs,
             )
             return crawl_response
@@ -157,7 +157,7 @@ class Crw:
                 formats=['json'],
                 jsonSchema=response_format.model_json_schema(),
             )
-            return data.get('json', {})
+            return data.get('json', {}) if isinstance(data, dict) else {}
         except Exception as e:
             raise RuntimeError(f"Failed to perform structured scrape: {e}")
 
