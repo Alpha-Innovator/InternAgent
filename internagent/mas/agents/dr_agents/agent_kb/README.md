@@ -13,7 +13,10 @@ experience knowledge base and retrieved before executing similar future subtasks
 
 ## How it is wired into `dr_agents`
 
-- **Retrieval** — `agents/task/execution_agent.py` calls `call_hybrid_search('base'/'append', task)`
+- **Planner-side retrieval** — `agents/global_planner_agent.py` retrieves aligned planning
+  experience and injects it into the planner prompt (`GLOBAL_PLANNER_MEMORY_BLOCK`) to guide
+  graph construction. An external `set_memory_prompt(...)` hook is also provided.
+- **Executor-side retrieval** — `agents/task/execution_agent.py` calls `call_hybrid_search('base'/'append', task)`
   before a subtask and injects the results into `EXECUTION_PROMPT_WITHMEMORY`.
 - **Write-back** — `workflow/task.py` collects the subtask trace, distills it with
   `MEMORY_REASONING_PROMPT`, and calls `call_appendkb(...)` after the task finishes.

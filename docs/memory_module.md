@@ -141,7 +141,8 @@ experience:
 
 **Where it lives (`internagent/mas/agents/dr_agents`):**
 
-- **Retrieval** — `agents/task/execution_agent.py`: before running a subtask it calls
+- **Planner-side retrieval** — `agents/global_planner_agent.py`: before building the task graph it retrieves aligned planning experience from the KB and injects it via `GLOBAL_PLANNER_MEMORY_BLOCK` (appended to `GLOBAL_PLANNER_PROMPT`), guiding the planner toward more coherent reasoning graphs. An external `set_memory_prompt(...)` hook is also available.
+- **Executor-side retrieval** — `agents/task/execution_agent.py`: before running a subtask it calls
   `call_hybrid_search('base'/'append', task)` and injects the results into
   `EXECUTION_PROMPT_WITHMEMORY` (defined in `prompts/default_prompts.py`).
 - **Write-back** — `workflow/task.py`: after a task completes it distills the trace with
