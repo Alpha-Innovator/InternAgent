@@ -1,0 +1,98 @@
+semantic_match_prompt: |
+  Task : Determine if the semantic meaning of the prediction and true_answer matches.
+
+  Input Format :
+  question: [Description of the specific task]
+  prediction: [Model generated output]
+  true_answer: [Ground truth answer]
+
+  Judgment Criteria :
+  1. Semantic match takes precedence over literal match (allow synonyms/paraphrasing)
+  2. Core information must be identical (entities/numbers/logical relationships must align)
+  3. Ignore minor formatting differences (punctuation, spacing, capitalization)
+
+  Consider false when:
+  - Semantic contradictions exist
+  - Information is missing/redundant
+  - Precision mismatch (e.g., "2023" vs "May 2023")
+  - Correct results caused by reasoning errors
+
+  Output Requirements:
+  - Strictly return plain text "true" or "false"
+  - No explanations or additional content
+  - Maintain strict boolean output format
+
+  Examples:
+  question: On the DeepFruits fruit detection graph on Connected Papers from 2016, what feature caused the largest bubble to be the size it is?
+  prediction: citation count
+  true_answer: citations
+  true
+
+  task: Calculate the result of 2+3
+  prediction: five
+  true_answer: 6
+  false
+
+  Now answer the task below:\n
+  question: {{question}}
+  prediction: {{prediction}}
+  true_answer: {{true_answer}}
+
+student_agent_reason: |
+  Extract key information from user query to construct efficient search terms for retrieving the most relevant results.
+
+  Requirements:
+  1. Analyze the user's question to identify core concepts, terminology, and keywords
+  2. Extract contextual information and constraints that may impact search quality
+  3. Break down complex questions into searchable components
+  4. Identify the domain, subject matter, and specific needs of the question
+
+  Output format:
+  <core concepts or topics of the question>
+
+  Ensure search terms are specific enough to retrieve relevant information while maintaining sufficient breadth to capture related cases.
+  Combine technical terminology with everyday expressions to optimize search effectiveness.
+
+  Here is the user query:
+  {{user_query}}
+
+teacher_agent_reason: |
+  Please provide a concise summary of the following execution log.
+  Break down the summary into individual steps, and for each step, briefly describe what action was taken and its outcome.
+  Ensure the summary is clear, structured, and captures all key actions in the order they occurred.
+  
+  **Execution logs:** 
+  {{agent_log}}
+
+student_agent_refine: |
+  Analyze similar tasks and past experiences to generate concise, actionable suggestions for improving the current plan. Based on the patterns identified in relevant tasks and insights from the knowledge base, provide specific recommendations.
+
+  **Key Requirements:**
+  1. Focus exclusively on technical/behavioral improvements derived from similar task patterns and experience.
+  2. Provide root-cause solutions and implementation strategies based on past successes.
+  3. Format output strictly as:
+      1. [Specific suggestion 1]
+      2. [Specific suggestion 2]
+  ...
+  No headings, explanations, or markdown.
+
+  **You can refer to similar tasks, plans, and corresponding experience to provide your suggestions:**
+  {{knowledge}}
+
+teacher_agent_refine: |
+  Analyze the execution log summary to determine the causes of the agent's incorrect responses. Based on the findings of the log patterns and the knowledge base, generate some concise, actionable suggestions the agent must follow to improve accuracy. 
+
+  **Key Requirements:**  
+  1. Focus exclusively on technical/behavioral fixes derived from log patterns and the knowledge base.  
+  2. Provide root-cause resolution (e.g., code logic, data validation, API handling) as well as generic advice.  
+  3. Format output strictly as:  
+      1. [Specific suggestion 1]  
+      2. [Specific suggestion 2]  
+  ...  
+  No headings, explanations, or markdown.  
+
+  **You can refer to similar tasks and corresponding experience to provide your suggestions:**  
+  {{knowledge}}
+
+  **Logs summary:**  
+  {{log_summary}}

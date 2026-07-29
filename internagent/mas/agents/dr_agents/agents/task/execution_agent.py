@@ -14,6 +14,25 @@ from utils.reference_manager import ReferenceManager
 from utils.logger import get_logger
 from utils.prompt_loader import load_prompt
 
+# Strategy-Procedural Memory (SPM, paper Sec. 2.4.1) — optional experience KB.
+# Imported lazily/safely so the DR path still runs when the agent_kb service or
+# package is unavailable. When missing, SPM retrieval is skipped and the normal
+# EXECUTION_PROMPT is used.
+try:
+    from agent_kb.example import call_hybrid_search
+except Exception:  # pragma: no cover - agent_kb is optional
+    call_hybrid_search = None
+
+
+def _is_truthy(val) -> bool:
+    """True for boolean True or the strings 'true'/'True' (env-var friendly)."""
+    return val is True or (isinstance(val, str) and val.strip().lower() == "true")
+
+
+def _need_memory_enabled(config: Dict[str, Any]) -> bool:
+    """Resolve the SPM on/off switch: env `need_memory` takes precedence, then config."""
+    return _is_truthy(os.getenv("need_memory", config.get("need_memory", False)))
+
 
 class ExecutionAgent(BaseAgent):
     """
@@ -62,7 +81,22 @@ class ExecutionAgent(BaseAgent):
             summary_config,
             default_name="SUMMARY_PROMPT"
         )
-        
+
+        # SPM (Strategy-Procedural Memory): memory-augmented execution prompt +
+        # retrieval switch. Only takes effect when need_memory is set AND the
+        # agent_kb client is importable; otherwise the normal prompt is used.
+        execution_memory_config = {
+            "prompt_path": self.config.get("execution_prompt_with_memory_path"),
+            "prompt_name": self.config.get("execution_prompt_with_memory_name")
+        }
+        self.execution_prompt_with_memory = load_prompt(
+            execution_memory_config,
+            default_name="EXECUTION_PROMPT_WITHMEMORY"
+        )
+        self.need_memory = _need_memory_enabled(self.config)
+        self.base_retrieve_score_threshold = self.config.get('base_retrieve_score_threshold', 0.3)
+        self.append_retrieve_score_threshold = self.config.get('append_retrieve_score_threshold', 0.65)
+
         self.max_tool_calls = self.config.get('max_tool_calls', 15)
         self.node_id = None  # 节点ID
         self.subtask_id = None  # 子任务ID
@@ -196,7 +230,11 @@ class ExecutionAgent(BaseAgent):
         
         try:
             self._logger.info(f"开始执行子任务: {subtask}")
-            
+
+            # 预初始化，保证异常分支也能安全引用
+            messages = []
+            wrong_messages = []  # SPM: 记录失败的工具调用，供经验蒸馏使用
+
             # 从context中获取信息
             task = context.get("task", "")
             history_subtasks = context.get("history_subtasks", [])
@@ -204,16 +242,56 @@ class ExecutionAgent(BaseAgent):
             file_path = context.get("file_path", "")
             self.node_id = context.get("node_id", None)
             self.subtask_id = context.get("subtask_id", None)
-            
-            # 初始化消息历史，使用execution_prompt
-            formatted_prompt = self.execution_prompt.format(
-                task=task,
-                query = query,
-                history_subtasks=json.dumps(history_subtasks, ensure_ascii=False, indent=2) if history_subtasks else "[]",
-                subtask=subtask,
-                knowledge_info=json.dumps(knowledge_info, ensure_ascii=False, indent=2) if knowledge_info else "{}",
-                file_path=file_path
-            )
+
+            # SPM retrieval: when enabled and the KB client is available, retrieve
+            # strategy/procedural experiences for similar tasks and inject them via
+            # the memory-augmented prompt. Any failure degrades to the normal prompt.
+            retrieved_pairs = []
+            use_memory_prompt = False
+            if self.need_memory and call_hybrid_search is not None:
+                try:
+                    self._logger.info("SPM 已启用，从 agent_kb 检索经验 =============== ")
+                    base_similar = call_hybrid_search('base', task, top_k=2, weights={"text": 0.3, "semantic": 0.7})
+                    append_similar = call_hybrid_search('append', task, top_k=2, weights={"text": 0.3, "semantic": 0.7})
+                    for exp in (base_similar or []):
+                        if exp.get('total_score', 0) > self.base_retrieve_score_threshold:
+                            retrieved_pairs.append({
+                                'retrieved_question': exp.get('query'),
+                                'retrieved_experience': (exp.get('agent_experience', '') or '') + '\n\n' + (exp.get('search_agent_experience', '') or '')
+                            })
+                    for exp in (append_similar or []):
+                        if exp.get('total_score', 0) > self.append_retrieve_score_threshold:
+                            retrieved_pairs.append({
+                                'retrieved_question': exp.get('query'),
+                                'retrieved_experience': (exp.get('agent_experience', '') or '') + '\n\n' + (exp.get('search_agent_experience', '') or '')
+                            })
+                    use_memory_prompt = True
+                except Exception as e:
+                    self._logger.warning(f"SPM 检索失败，回退到普通 prompt: {e}")
+                    use_memory_prompt = False
+            elif self.need_memory and call_hybrid_search is None:
+                self._logger.warning("need_memory 已开启，但 agent_kb 客户端不可用，使用普通 prompt")
+
+            # 初始化消息历史，使用execution_prompt（或带记忆的变体）
+            if use_memory_prompt:
+                formatted_prompt = self.execution_prompt_with_memory.format(
+                    task=task,
+                    query=query,
+                    history_subtasks=json.dumps(history_subtasks, ensure_ascii=False, indent=2) if history_subtasks else "[]",
+                    subtask=subtask,
+                    knowledge_info=json.dumps(knowledge_info, ensure_ascii=False, indent=2) if knowledge_info else "{}",
+                    file_path=file_path,
+                    retrieved_pairs=json.dumps(retrieved_pairs, ensure_ascii=False, indent=2) if retrieved_pairs else "[]",
+                )
+            else:
+                formatted_prompt = self.execution_prompt.format(
+                    task=task,
+                    query=query,
+                    history_subtasks=json.dumps(history_subtasks, ensure_ascii=False, indent=2) if history_subtasks else "[]",
+                    subtask=subtask,
+                    knowledge_info=json.dumps(knowledge_info, ensure_ascii=False, indent=2) if knowledge_info else "{}",
+                    file_path=file_path
+                )
             messages = [{"role": "user", "content": formatted_prompt}]
             tool_call_count = 0
             max_tool_calls = self.max_tool_calls  # 防止无限循环
@@ -249,24 +327,41 @@ class ExecutionAgent(BaseAgent):
                     
                     # 添加工具调用结果到消息历史
                     if "tool_calls" in result and result["tool_calls"]:
-                        # 获取助手消息中的工具调用ID
+                        # 获取助手消息中的工具调用ID（以及名称/参数，供 SPM 记录失败调用）
                         assistant_tool_call_ids = []
+                        assistant_tool_call_map = {}
                         if "assistant_message" in result and "tool_calls" in result["assistant_message"]:
                             for tool_call in result["assistant_message"]["tool_calls"]:
-                                tool_call_id = self._get_tool_call_id(tool_call)
-                                assistant_tool_call_ids.append(tool_call_id)
-                        
+                                tc_id = self._get_tool_call_id(tool_call)
+                                assistant_tool_call_ids.append(tc_id)
+                                tc_name = self._get_tool_name_from_call(tool_call)
+                                try:
+                                    if hasattr(tool_call, 'function'):
+                                        tc_args = getattr(tool_call.function, 'arguments', None)
+                                    elif isinstance(tool_call, dict):
+                                        tc_args = tool_call.get('function', {}).get('arguments')
+                                    else:
+                                        tc_args = None
+                                except Exception:
+                                    tc_args = None
+                                assistant_tool_call_map[tc_id] = {
+                                    "tool_name": tc_name,
+                                    "tool_call_id": tc_id,
+                                    "argument": tc_args,
+                                }
+
                         # 使用工具调用结果中的ID
                         for i, tool_result in enumerate(result["tool_calls"]):
-                            content = str(tool_result.get("result", "")) if tool_result.get("success") else f"Error: {tool_result.get('error', 'Unknown error')}"
-                            
+                            is_success = bool(tool_result.get("success", False))
+                            content = str(tool_result.get("result", "")) if is_success else f"Error: {tool_result.get('error', 'Unknown error')}"
+
                             # 使用助手消息中的工具调用ID，如果没有则生成一个
                             if i < len(assistant_tool_call_ids):
                                 tool_call_id = assistant_tool_call_ids[i]
                             else:
                                 tool_name = tool_result.get("tool_name", f"tool_{i}")
                                 tool_call_id = f"call_{tool_call_count}_{i}_{tool_name}"
-                            
+
                             tool_message = {
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
@@ -274,6 +369,19 @@ class ExecutionAgent(BaseAgent):
                             }
                             messages.append(tool_message)
                             self._logger.info(f"添加工具消息: {tool_message}")
+
+                            # SPM: 记录失败的工具调用（含发起时的命令/参数），供经验蒸馏
+                            if not is_success:
+                                wrong_messages.append({
+                                    "tool_call_id": tool_call_id,
+                                    "tool_name": tool_result.get("tool_name", ""),
+                                    "command": assistant_tool_call_map.get(tool_call_id, {
+                                        "tool_name": tool_result.get("tool_name", ""),
+                                        "tool_call_id": tool_call_id,
+                                        "raw_tool_call": None,
+                                    }),
+                                    "error": tool_result.get("error", "Unknown error"),
+                                })
                     # 注意：这里不需要else分支，因为如果result["tool_calls"]为空，就不会进入上面的if分支
                     
                     tool_call_count += 1
@@ -289,9 +397,15 @@ class ExecutionAgent(BaseAgent):
                         
                 else:
                     # 没有工具调用，任务完成
+                    # SPM: 保留最终 assistant 文本，使经验蒸馏能看到收尾推理
+                    if "assistant_message" in result and result["assistant_message"].get("content"):
+                        messages.append({
+                            "role": "assistant",
+                            "content": result["assistant_message"]["content"]
+                        })
                     self._logger.info("没有检测到工具调用，子任务完成")
                     break
-            
+
             # 生成最终响应
             final_result = self._generate_subtask_response(subtask, messages, context)
             try:
@@ -309,16 +423,17 @@ class ExecutionAgent(BaseAgent):
                 # 如果JSON解析失败，使用原始响应作为summary
                 summary = final_result
                 success = True
-            
+
             return {
                 "subtask": subtask,
                 "completed": True,
                 "tool_calls": tool_call_count,
                 "success": success,
                 "messages": messages,
-                "summary": summary
+                "summary": summary,
+                "wrong_messages": wrong_messages
             }
-            
+
         except Exception as e:
             self._logger.error(f"子任务执行失败: {e}")
             return {
@@ -327,7 +442,9 @@ class ExecutionAgent(BaseAgent):
                 "error": str(e),
                 "tool_calls": 0,
                 "summary": f"执行失败: {str(e)}",
-                "success": False
+                "success": False,
+                "messages": messages,
+                "wrong_messages": wrong_messages
             }
     
     def _extract_and_parse_json(self, text: str) -> Optional[Dict[str, Any]]:

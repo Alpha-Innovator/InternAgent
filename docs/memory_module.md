@@ -120,6 +120,65 @@ memory:
 Long memory requires the same embedding model as task memory. If no embedding model is configured, it falls back to keyword-only idea tracking without semantic edges.
 
 
+---
+
+## Strategy-Procedural Memory (SPM) — Deep Research path
+
+> **Note:** the memory described above (task / online / long memory) belongs to the
+> **algorithm-discovery / idea-generation** path. The **Deep Research** path
+> (`DRAgent` / `internagent/mas/agents/dr_agents`) uses a separate mechanism:
+> **Strategy-Procedural Memory (SPM)**, described in Section 2.4.1 of the paper.
+> The two are independent subsystems.
+
+SPM is an experience knowledge base that accumulates lessons from completed research
+tasks and reuses them on similar future subtasks. Each task distills into two kinds of
+experience:
+
+| SPM component | stored field | prompt label |
+|---|---|---|
+| **Strategy memory** (planning) | `agent_experience` | `PLANNING EXPERIENCE` |
+| **Procedural memory** (execution) | `search_agent_experience` | `EXECUTION EXPERIENCE` |
+
+**Where it lives (`internagent/mas/agents/dr_agents`):**
+
+- **Retrieval** — `agents/task/execution_agent.py`: before running a subtask it calls
+  `call_hybrid_search('base'/'append', task)` and injects the results into
+  `EXECUTION_PROMPT_WITHMEMORY` (defined in `prompts/default_prompts.py`).
+- **Write-back** — `workflow/task.py`: after a task completes it distills the trace with
+  `MEMORY_REASONING_PROMPT` (into strategy + procedural experience) and calls
+  `call_appendkb(...)`.
+- **Store / retrieval service** — `agent_kb/` (a standalone FastAPI service with a
+  base + append two-tier KB and hybrid text+semantic retrieval). See
+  [`internagent/mas/agents/dr_agents/agent_kb/README.md`](../internagent/mas/agents/dr_agents/agent_kb/README.md).
+
+### Enabling SPM
+
+SPM is **off by default** and only activates when both hold:
+
+1. `need_memory=true` — env var (recommended; overrides config), or the `need_memory`
+   keys under `global_execution` / `global_execution.execution` in the DR `config_*.yaml`.
+2. The `agent_kb` service is running and reachable at `AGENT_KB_URL`
+   (default `http://127.0.0.1:9000`).
+
+```bash
+# 1) start the experience KB service (needs KB data + an embedding model)
+cd internagent/mas/agents/dr_agents/agent_kb
+pip install -r requirements.txt
+export BASE_KB_PATH=/path/to/agent_kb_database.json
+export APPEND_KB_PATH=/path/to/agent_kb_append.json
+uvicorn agent_kb_service:app --host 0.0.0.0 --port 9000
+
+# 2) enable SPM for the Deep Research run
+export need_memory=true
+export AGENT_KB_URL=http://127.0.0.1:9000
+```
+
+If the package or service is unavailable, the DR path **degrades gracefully**: retrieval
+is skipped (the normal `EXECUTION_PROMPT` is used) and write-back is a no-op — the task
+still completes. The large KB data files are not bundled; configure them via the env
+vars above.
+
+
 ## 📝 Citation
 
 ```bibtex

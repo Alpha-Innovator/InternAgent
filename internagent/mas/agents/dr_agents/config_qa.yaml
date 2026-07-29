@@ -26,6 +26,11 @@ global_planner:
       - "url_processor"
 
 global_execution:
+  # SPM (Strategy-Procedural Memory, paper Sec. 2.4.1) — OFF by default.
+  # Recommended switch: env `need_memory=true` (takes precedence over this key).
+  # Requires the agent_kb experience service (see agent_kb/README.md), reachable at
+  # env `AGENT_KB_URL` (default http://127.0.0.1:9000). Read here by TaskWorkflow (write-back).
+  need_memory: false
   max_workers: 10
   planner:
     max_subtasks: 2
@@ -37,6 +42,8 @@ global_execution:
         - "volc_search"
         - "url_processor"
   execution:
+    # SPM retrieval switch (read by ExecutionAgent); env `need_memory` overrides.
+    need_memory: false
     max_tool_calls: 5
     tools:
       enabled_tools:

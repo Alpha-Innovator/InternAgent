@@ -16,6 +16,28 @@ from models import get_model
 from utils.logger import get_logger, get_node_logger
 from utils.prompt_loader import load_prompt
 
+# Strategy-Procedural Memory (SPM, paper Sec. 2.4.1) write-back — optional.
+# Imported lazily/safely so the DR path still runs when the agent_kb package or
+# service is unavailable; when missing, write-back is skipped.
+try:
+    from agent_kb.memory_utils import remove_tool_messages, extract_agent_and_search_experience
+    from agent_kb.example import call_appendkb
+except Exception:  # pragma: no cover - agent_kb is optional
+    remove_tool_messages = None
+    extract_agent_and_search_experience = None
+    call_appendkb = None
+
+
+def _is_truthy(val) -> bool:
+    """True for boolean True or the strings 'true'/'True' (env-var friendly)."""
+    return val is True or (isinstance(val, str) and val.strip().lower() == "true")
+
+
+def _need_memory_enabled(config) -> bool:
+    """Resolve the SPM on/off switch: env `need_memory` takes precedence, then config."""
+    cfg = config or {}
+    return _is_truthy(os.getenv("need_memory", cfg.get("need_memory", False)))
+
 # 使用utils logger
 logger = get_logger("task_workflow")
 
@@ -54,6 +76,18 @@ class TaskWorkflow(BaseAgent):
             self.config,
             default_name="TASK_SUMMARY_PROMPT"
         )
+
+        # SPM (Strategy-Procedural Memory): 经验蒸馏 prompt + 写回开关。
+        # 仅在 need_memory 开启且 agent_kb 可用时生效。
+        memory_reasoning_config = {
+            "prompt_path": self.config.get("memory_reasoning_prompt_path"),
+            "prompt_name": self.config.get("memory_reasoning_prompt_name")
+        }
+        self.memory_reasoning_prompt = load_prompt(
+            memory_reasoning_config,
+            default_name="MEMORY_REASONING_PROMPT"
+        )
+        self.need_memory = _need_memory_enabled(self.config)
         
         # 初始化代理
         logger.info("初始化planner agent")
@@ -132,7 +166,10 @@ class TaskWorkflow(BaseAgent):
                 results = []
                 task = task_input.get("task", "")
 
-                
+                # SPM: 收集每个子任务的（去掉 tool 消息的）对话与失败调用，供任务结束后蒸馏经验
+                result_messages = []
+                wrong_messages = []
+
                 for i, subtask in enumerate(subtasks):
                     active_logger.info(f"执行子任务 {i+1}/{len(subtasks)}: {subtask}")
                     
@@ -175,6 +212,17 @@ class TaskWorkflow(BaseAgent):
                     })
                     
                     result = self.execution_agent.execute(subtask = subtask, context = context, query = task_input['query'])
+
+                    # SPM: 累积子任务对话（去掉 tool 消息）与失败工具调用
+                    if self.need_memory and remove_tool_messages is not None:
+                        try:
+                            sub_messages = result.get('messages', [])
+                            result_messages.append(remove_tool_messages(sub_messages))
+                            if result.get('wrong_messages'):
+                                wrong_messages.append(json.dumps(result['wrong_messages'], ensure_ascii=False))
+                        except Exception as e:
+                            active_logger.warning(f"SPM 采集子任务 trace 失败（忽略）: {e}")
+
                     # 发送子任务执行结果到Redis
                     self.send_redis_event("get_subtask_result", {
                         "task_id": self.task_id,
@@ -201,7 +249,32 @@ class TaskWorkflow(BaseAgent):
                 "node_id": self.node_id,
                 "result": {"success": final_result.get("success", False), "summary": final_result.get("final_answer", ""), "reasoning": final_result.get("reasoning", "")}
             })
-            
+
+            # SPM 写回：把本次任务的规划(strategy) + 执行(procedural)经验蒸馏后存入 agent_kb
+            if self.need_memory and call_appendkb is not None and extract_agent_and_search_experience is not None:
+                try:
+                    active_logger.info("SPM 经验写回 ============= ")
+                    task_trace = {
+                        'query': task,
+                        'plan': subtasks,
+                        'search_plan': result_messages,
+                        'wrong_messages': wrong_messages
+                    }
+                    str_task_trace = json.dumps(task_trace, ensure_ascii=False)
+                    task_trace['plan'] = json.dumps(task_trace['plan'], ensure_ascii=False)
+                    task_trace['search_plan'] = json.dumps(task_trace['search_plan'], ensure_ascii=False)
+                    memory_reasoning_prompt = self.memory_reasoning_prompt.format(subtask_trace=str_task_trace)
+                    model_instance = get_model(self.model, **self.model_kwargs)
+                    raw_experience = model_instance.generate(memory_reasoning_prompt)
+                    parsed = extract_agent_and_search_experience(raw_experience)
+                    task_trace['agent_experience'] = parsed["agent_experience"]            # Strategy memory
+                    task_trace['search_agent_experience'] = parsed["search_agent_experience"]  # Procedural memory
+                    task_trace['is_success'] = final_result.get("success", False)
+                    call_appendkb(task_trace)
+                    active_logger.info("SPM 经验写回完成")
+                except Exception as e:
+                    active_logger.warning(f"SPM 经验写回失败（忽略，不影响任务结果）: {e}")
+
             active_logger.info("任务工作流执行完成")
             return final_result
             
