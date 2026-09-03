@@ -25,7 +25,7 @@
       "mIoU": true
     },
     "Gears": {
-      "Test Top 20 DE MSE": true
+      "Test Top 20 DE MSE": false
     },
     "Geometry QA":{
       "Accuracy": true
